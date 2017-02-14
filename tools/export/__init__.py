@@ -27,13 +27,15 @@ sys.path.insert(0, ROOT)
 
 from tools.build_api import prepare_toolchain
 from tools.build_api import scan_resources
-from tools.toolchains import Resources
+from tools.toolchains import Resources, mbedToolchain
 from tools.export import lpcxpresso, ds5_5, iar, makefile
 from tools.export import embitz, coide, kds, simplicity, atmelstudio
 from tools.export import sw4stm32, e2studio, zip, cmsis, uvision, cdt, vscode
 from tools.export import gnuarmeclipse
 from tools.export import qtcreator
-from tools.targets import TARGET_NAMES
+from tools.targets import TARGET_NAMES, set_targets_json_location
+from tools.build_profiles import find_build_profile, find_targets_json
+from tools.build_profiles import get_toolchain_profile
 
 EXPORTERS = {
     'uvision5': uvision.Uvision,
@@ -74,7 +76,7 @@ To export this project please <a href='http://mbed.org/compiler/?import=http://m
 """
 
 def mcu_ide_list():
-    """Shows list of exportable ides 
+    """Shows list of exportable ides
 
     """
     supported_ides = sorted(EXPORTERS.keys())
@@ -302,6 +304,45 @@ def export_project(src_paths, export_path, target, ide, libraries_paths=None,
         makedirs(export_path)
 
     _, toolchain_name = get_exporter_toolchain(ide)
+
+    ###################################
+    # mbed Classic/2.0/libary support #
+
+    # Find build system profile
+    profile = None
+    targets_json = None
+    for path in paths:
+        profile = find_build_profile(path) or profile
+        if profile:
+            targets_json = join(dirname(dirname(abspath(__file__))), 'legacy_targets.json')
+        else:
+            targets_json = find_targets_json(path) or targets_json
+
+    # Apply targets.json to active targets
+    if targets_json:
+        if not silent:
+            print("Using targets from %s" % targets_json)
+        set_targets_json_location(targets_json)
+
+    # Apply profile to toolchains
+    if profile:
+        def init_hook(self):
+            profile_data = get_toolchain_profile(self.name, profile)
+            if not profile_data:
+                return
+            if not silent:
+                self.info("Using toolchain %s profile %s" % (self.name, profile))
+
+            for k,v in profile_data.items():
+                if self.flags.has_key(k):
+                    self.flags[k] = v
+                else:
+                    setattr(self, k, v)
+
+        mbedToolchain.init = init_hook
+
+    # mbed Classic/2.0/libary support #
+    ###################################
 
     # Pass all params to the unified prepare_resources()
     toolchain = prepare_toolchain(
